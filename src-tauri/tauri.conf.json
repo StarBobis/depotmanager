@@ -12,13 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "depotmanager",
-        "width": 800,
-        "height": 600
+        "title": "DepotManager - Steam 历史版本下载器",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data: https: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

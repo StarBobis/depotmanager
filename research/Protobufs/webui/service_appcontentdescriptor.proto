@@ -1,0 +1,116 @@
+import "common_base.proto";
+
+message AIContentSurvey {
+	optional string desc_code_generated = 1;
+	optional string desc_copyright_infringement_guarantee = 2;
+	optional string desc_content_moderation_strategy = 3;
+	optional string external_service_name = 4;
+	optional string external_service_url = 5;
+	optional string desc_external_service_how_content_available_to_players = 6;
+	optional string desc_external_service_monetization = 7;
+}
+
+message AppRating {
+	optional int32 rating_agency = 1 [(.description) = "enum"];
+	optional string rating = 2;
+	optional int32 source = 3 [(.description) = "enum"];
+	optional bool banned = 4;
+	optional uint32 required_age = 5;
+	optional bool use_age_gate = 6;
+	optional .AppRatingAuxData aux_data = 7;
+}
+
+message AppRatingAuxData {
+	repeated string descriptors = 1;
+	repeated string interactive_elements = 2;
+	optional string official_id = 3;
+	optional bool esrb_online_music_not_rated = 4;
+	optional bool esrb_online_interactions_not_rated = 5;
+	repeated int32 descriptor_images = 6 [(.description) = "enum"];
+}
+
+message CAppContentDescriptors_GetSurvey_Response {
+	optional uint64 surveyid = 1;
+	optional .ContentDescriptorSurvey survey = 2;
+}
+
+message ContentDescriptor {
+	optional uint32 id = 1;
+}
+
+message ContentDescriptorSurvey {
+	optional uint64 surveyid = 1;
+	optional int32 state = 2 [(.description) = "enum"];
+	repeated .ContentDescriptor descriptors = 3;
+	optional uint32 timestamp_started = 4;
+	optional uint32 timestamp_updated = 5;
+	optional uint32 timestamp_finished = 6;
+	optional uint32 accountid = 7;
+	optional string developer_notes = 8;
+	optional string keyvalues = 9;
+	optional .GeneratedGameRatings ratings = 10;
+	repeated int32 categories = 11 [(.description) = "enum"];
+	optional .AIContentSurvey ai_survey = 12;
+	optional string internal_notes = 13;
+	repeated .AppRating all_ratings = 14;
+	repeated .SurveySectionReviewed sections_reviewed = 15;
+	optional .ContentSurveyDisclosure disclosure = 16;
+	optional uint64 inherited_surveyid = 17;
+	optional bool started_from_scratch = 18;
+	optional .ContentSurveyAuxData survey_aux_data = 19;
+	optional int32 source = 20 [(.description) = "enum"];
+	optional uint64 flags = 21;
+}
+
+message ContentSurveyAuxData {
+	optional .ContentSurveyDisclosure disclosure = 1;
+	repeated int32 interactive_elements = 2 [(.description) = "enum"];
+}
+
+message ContentSurveyDisclosure {
+	repeated .ContentSurveyLocalizedText customer_notes = 1;
+	repeated .ContentSurveyLocalizedText customer_notes_ai = 2;
+	repeated int32 mature_tags = 3 [(.description) = "enum"];
+	optional bool has_mature_content = 4;
+	optional string ai_external_service_name = 5;
+	optional string ai_external_service_url = 6;
+}
+
+message ContentSurveyLocalizedText {
+	optional int32 elanguage = 1;
+	optional string text = 2;
+}
+
+message GeneratedGameContent {
+	optional int32 content_category = 1 [(.description) = "enum"];
+	repeated int32 questionaire_categories = 2 [(.description) = "enum"];
+}
+
+message GeneratedGameRating {
+	optional string rating_agency = 1;
+	optional string rating = 2;
+	optional uint32 required_age = 3;
+	repeated string descriptors = 4;
+	optional bool banned = 5;
+}
+
+message GeneratedGameRatings {
+	optional uint32 timestamp_generated = 1;
+	optional uint32 generated_version = 2;
+	repeated .GeneratedGameRating ratings = 3;
+	repeated .GeneratedGameContent content_categories = 4;
+}
+
+message SurveySectionReviewed {
+	optional int32 survey_section = 1 [(.description) = "enum"];
+	optional uint32 time_reviewed = 2;
+	optional uint32 accountid_reviewer = 3;
+}
+
+service AppContentDescriptor {
+	// bConstMethod=true, ePrivilege=7
+	rpc GetActiveSurvey (.NotImplemented) returns (.CAppContentDescriptors_GetSurvey_Response);
+	// bConstMethod=true, ePrivilege=7
+	rpc GetWorkingSurvey (.NotImplemented) returns (.CAppContentDescriptors_GetSurvey_Response);
+}
+

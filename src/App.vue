@@ -1,160 +1,128 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { appState, initStore } from "./store";
+import LoginPanel from "./components/LoginPanel.vue";
+import SearchView from "./components/SearchView.vue";
+import DetailView from "./components/DetailView.vue";
+import TasksView from "./components/TasksView.vue";
+import SettingsView from "./components/SettingsView.vue";
 
-const greetMsg = ref("");
-const name = ref("");
+const logEl = ref<HTMLElement | null>(null);
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
-}
+const activeCount = computed(
+  () =>
+    [...appState.tasks.values()].filter((t) =>
+      ["Queued", "Preparing", "Downloading", "Verifying"].includes(t.state)
+    ).length
+);
+
+const statusText = computed(() => {
+  const s = appState.login;
+  switch (s.phase) {
+    case "Offline":
+      return s.message || "离线";
+    case "Connecting":
+      return "正在连接 Steam...";
+    case "Authenticating":
+      return s.detail || "验证中...";
+    case "LoggingOn":
+      return "登录中...";
+    case "Online":
+      return s.anonymous ? "匿名模式" : `已登录: ${s.account_name}`;
+  }
+});
+
+watch(
+  () => appState.logs.length,
+  async () => {
+    await nextTick();
+    if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
+  }
+);
+
+onMounted(initStore);
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand" @click="appState.view = 'search'">
+        <span class="logo">⬇</span>
+        <span class="bright">DepotManager</span>
+        <span class="muted small">Steam 历史版本下载器</span>
+      </div>
 
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
-    </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
+      <nav class="nav">
+        <button class="ghost" :class="{ active: appState.view === 'search' || appState.view === 'detail' }" @click="appState.view = 'search'">
+          🔍 浏览游戏
+        </button>
+        <button class="ghost" :class="{ active: appState.view === 'tasks' }" @click="appState.view = 'tasks'">
+          📥 下载<span v-if="activeCount" class="badge yellow" style="margin-left: 4px">{{ activeCount }}</span>
+        </button>
+        <button class="ghost" :class="{ active: appState.view === 'settings' }" @click="appState.view = 'settings'">
+          ⚙ 设置
+        </button>
+      </nav>
 
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
-  </main>
+      <div class="grow"></div>
+
+      <span class="muted small status">{{ statusText }}</span>
+      <button class="ghost small" @click="appState.logVisible = !appState.logVisible">
+        {{ appState.logVisible ? "隐藏日志" : "日志" }}
+      </button>
+      <LoginPanel />
+    </header>
+
+    <main class="main">
+      <SearchView v-if="appState.view === 'search'" />
+      <DetailView v-else-if="appState.view === 'detail' && appState.selectedAppId" :app-id="appState.selectedAppId" />
+      <TasksView v-else-if="appState.view === 'tasks'" />
+      <SettingsView v-else-if="appState.view === 'settings'" />
+    </main>
+
+    <footer v-if="appState.logVisible" class="log-console" ref="logEl">
+      <div v-for="(line, i) in appState.logs" :key="i" class="log-line mono small">{{ line }}</div>
+      <div v-if="appState.logs.length === 0" class="muted small">暂无日志</div>
+    </footer>
+  </div>
 </template>
 
 <style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
-<style>
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
+.shell { display: flex; flex-direction: column; height: 100%; }
+.topbar {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
-
+.brand { display: flex; align-items: baseline; gap: 8px; cursor: pointer; }
 .logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
+  display: inline-block;
+  width: 22px; height: 22px;
+  background: linear-gradient(180deg, #47a0d8, #2e6d96);
+  border-radius: 4px;
   text-align: center;
+  line-height: 22px;
+  font-size: 13px;
+  color: white;
+  align-self: center;
 }
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+.nav { display: flex; gap: 4px; }
+.nav .ghost { padding: 6px 12px; color: var(--text-dim); }
+.nav .ghost.active { color: var(--text-bright); background: rgba(102, 192, 244, 0.12); }
+.status { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.main { flex: 1; min-height: 0; }
+.log-console {
+  height: 160px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  background: #0d1217;
+  border-top: 1px solid var(--border);
+  padding: 8px 14px;
+  user-select: text;
 }
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
+.log-line { padding: 1px 0; color: #9fb3c8; }
 </style>

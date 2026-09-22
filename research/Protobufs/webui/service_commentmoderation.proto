@@ -1,0 +1,42 @@
+import "common_base.proto";
+
+message CCommentModeration_UpdateCommentReportState_Request {
+	optional bool resolve = 1;
+	optional uint64 reportid = 2;
+	optional int32 report_action = 3 [(.description) = "enum"];
+	optional fixed64 gidcomment = 4;
+	optional string commentthreadtype = 5;
+	optional fixed64 steamid = 6;
+	optional uint64 gidfeature = 7;
+	optional uint64 gidfeature2 = 8;
+	optional .CommentClassification classification = 9;
+	optional uint32 reason = 10;
+	optional uint64 comment_thread_id = 11;
+	repeated .CCommentModeration_UpdateCommentReportState_Request_Sanction sanctions = 12;
+	optional string note = 13;
+	optional bool skip_lock = 14;
+}
+
+message CCommentModeration_UpdateCommentReportState_Request_Sanction {
+	optional int32 sanction = 1 [(.description) = "enum"];
+	optional int32 days = 2;
+	optional int32 escalate_to = 3 [(.description) = "enum"];
+}
+
+message CCommentModeration_UpdateCommentReportState_Response {
+}
+
+message CommentClassification {
+	optional bool explicit = 1;
+	optional bool adult = 2;
+	optional bool toxic = 3;
+	optional bool spam = 4;
+	optional bool malicious = 5;
+	optional bool commercial = 6;
+}
+
+service CommentModeration {
+	// ePrivilege=1
+	rpc UpdateCommentReportState (.CCommentModeration_UpdateCommentReportState_Request) returns (.CCommentModeration_UpdateCommentReportState_Response);
+}
+

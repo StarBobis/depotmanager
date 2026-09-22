@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
     DepotManager 一键发布脚本：同步版本号 -> tauri build -> git tag -> GitHub Release。
@@ -38,10 +38,28 @@ $BundleDir  = Join-Path $RepoRoot 'src-tauri\target\release\bundle'
 
 function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
+# PS5.1 的 Get-Content/Set-Content 默认按 ANSI 处理无 BOM 文件，这里统一用显式 UTF-8 读写
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Read-Utf8([string]$Path) { [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8) }
+function Write-Utf8([string]$Path, [string]$Text) { [System.IO.File]::WriteAllText($Path, $Text, $script:Utf8NoBom) }
+
+# git 的正常输出（push 进度、"Everything up-to-date" 等）也写到 stderr；
+# PS5.1 + EAP=Stop 管道场景会误报 NativeCommandError。统一封装：
+# 函数内局部 EAP=Continue，按退出码判断成败。
+# 注意：调用时以 '-' 开头的参数必须加引号（如 '-d'），否则会被 PowerShell
+# 当作本函数的参数名吞掉。
+function Invoke-Git {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+    $ErrorActionPreference = 'Continue'
+    $out = & git -C $RepoRoot @GitArgs 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "git $($GitArgs -join ' ') 失败: $out" }
+    $out
+}
+
 # ---------- 0. 解析仓库与版本 ----------
 
 Write-Step '解析仓库信息'
-$remoteUrl = (git -C $RepoRoot remote get-url origin).Trim()
+$remoteUrl = ((Invoke-Git remote get-url origin) | Select-Object -First 1).Trim()
 if ($remoteUrl -match 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/.]+)(\.git)?$') {
     $Owner = $Matches.owner; $Repo = $Matches.repo
 } else {
@@ -49,7 +67,7 @@ if ($remoteUrl -match 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/.]+)(\.git)?$')
 }
 Write-Host "    仓库: $Owner/$Repo"
 
-$conf = Get-Content $TauriConf -Raw | ConvertFrom-Json
+$conf = Read-Utf8 $TauriConf | ConvertFrom-Json
 $currentVersion = $conf.version
 if (-not $Version) { $Version = $currentVersion }
 if ($Version -notmatch '^\d+\.\d+\.\d+(-[\w\.]+)?$') { throw "版本号格式不正确: $Version" }
@@ -62,19 +80,19 @@ if ($Version -ne $currentVersion) {
     Write-Step "同步版本号 $currentVersion -> $Version"
 
     $conf.version = $Version
-    ($conf | ConvertTo-Json -Depth 32) | Set-Content $TauriConf -Encoding UTF8
+    Write-Utf8 $TauriConf (($conf | ConvertTo-Json -Depth 32) + "`n")
 
-    $cargo = Get-Content $CargoToml -Raw
+    $cargo = Read-Utf8 $CargoToml
     $cargo = $cargo -replace '(?m)^(version\s*=\s*")[^"]+(")', "`${1}$Version`$2"
-    Set-Content $CargoToml $cargo -Encoding UTF8 -NoNewline
+    Write-Utf8 $CargoToml $cargo
 
-    $pkg = Get-Content $PackageJson -Raw | ConvertFrom-Json
+    $pkg = Read-Utf8 $PackageJson | ConvertFrom-Json
     $pkg.version = $Version
-    ($pkg | ConvertTo-Json -Depth 32) | Set-Content $PackageJson -Encoding UTF8
+    Write-Utf8 $PackageJson (($pkg | ConvertTo-Json -Depth 32) + "`n")
 
-    git -C $RepoRoot add -- $TauriConf $CargoToml $PackageJson
-    git -C $RepoRoot commit -m "chore(release): $Tag" | Out-Null
-    git -C $RepoRoot push origin HEAD | Out-Null
+    Invoke-Git add '--' $TauriConf $CargoToml $PackageJson | Out-Null
+    Invoke-Git commit '-m' "chore(release): $Tag" | Out-Null
+    Invoke-Git push origin HEAD | Out-Null
     Write-Host '    版本号已提交并推送'
 }
 
@@ -108,21 +126,29 @@ $artifacts | ForEach-Object { Write-Host ("    {0}  ({1:N1} MB)" -f $_.Name, ($_
 # ---------- 4. git tag ----------
 
 Write-Step "创建并推送 tag $Tag"
-$tagExists = git -C $RepoRoot tag -l $Tag
+$tagExists = Invoke-Git tag '-l' $Tag
 if ($tagExists) {
     if (-not $Force) { throw "tag $Tag 已存在。加 -Force 覆盖。" }
-    git -C $RepoRoot tag -d $Tag | Out-Null
-    git -C $RepoRoot push origin ":refs/tags/$Tag" 2>$null | Out-Null
+    Invoke-Git tag '-d' $Tag | Out-Null
+    try { Invoke-Git push origin ":refs/tags/$Tag" | Out-Null } catch { Write-Host '    （远端无此 tag，跳过删除）' }
 }
-git -C $RepoRoot tag -a $Tag -m "Release $Tag"
-git -C $RepoRoot push origin $Tag
+Invoke-Git tag '-a' $Tag '-m' "Release $Tag" | Out-Null
+Invoke-Git push origin $Tag | Out-Null
 # 确保主分支也是最新
-git -C $RepoRoot push origin HEAD 2>$null | Out-Null
+Invoke-Git push origin HEAD | Out-Null
 
 # ---------- 5. GitHub 凭据 ----------
 
 Write-Step '获取 GitHub 凭据（Windows 凭据管理器）'
-$cred = "protocol=https`nhost=github.com`n" | git credential fill
+# 注意：PowerShell 管道/Process.StandardInput 会给 stdin 加 BOM，导致 git 报
+# "missing protocol field"，因此经临时文件 + cmd 重定向喂给 git。
+$credReq = Join-Path $env:TEMP "git-cred-req-$PID.txt"
+try {
+    Write-Utf8 $credReq "protocol=https`nhost=github.com`n`n"
+    $cred = & cmd /c "git credential fill < `"$credReq`""
+} finally {
+    Remove-Item $credReq -Force -ErrorAction SilentlyContinue
+}
 $Token = ($cred | Where-Object { $_ -match '^password=' }) -replace '^password=', ''
 if (-not $Token) { throw '未找到 github.com 的凭据，请先 git push 一次以缓存凭据' }
 $Headers = @{
@@ -138,12 +164,17 @@ Write-Step "创建 GitHub Release $Tag"
 $release = $null
 try {
     $release = Invoke-RestMethod -Headers $Headers -Uri "$ApiBase/releases/tags/$Tag"
+} catch {
+    # PS5.1 抛 WebException，PS7 抛 HttpResponseException；统一从 Response 取状态码
+    $code = $null
+    if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+    if ($code -ne 404) { throw }
+}
+if ($release) {
     if (-not $Force) { throw "Release $Tag 已存在。加 -Force 覆盖。" }
     Write-Host '    已存在同名 Release，-Force 生效：删除后重建'
     Invoke-RestMethod -Headers $Headers -Method Delete -Uri "$ApiBase/releases/$($release.id)" | Out-Null
     $release = $null
-} catch [Microsoft.PowerShell.Commands.HttpResponseException] {
-    if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
 }
 if (-not $release) {
     if (-not $Notes) {
@@ -175,9 +206,12 @@ Write-Host "    Release ID: $($release.id)"
 $uploadBase = $release.upload_url -replace '\{\?.*$', ''
 foreach ($file in $artifacts) {
     Write-Step "上传 $($file.Name)"
-    # 同名资源先删除（-Force 重跑时）
-    $existing = Invoke-RestMethod -Headers $Headers -Uri "$ApiBase/releases/$($release.id)/assets?per_page=100" |
-        Where-Object { $_.name -eq $file.Name }
+    # 同名资源先删除（-Force 重跑时）；空列表在 PS5.1 下可能返回无属性的空对象，逐一判空
+    $assets = @(Invoke-RestMethod -Headers $Headers -Uri "$ApiBase/releases/$($release.id)/assets?per_page=100")
+    $existing = @()
+    foreach ($a in $assets) {
+        if ($null -ne $a -and $a.PSObject.Properties['name'] -and $a.name -eq $file.Name) { $existing += $a }
+    }
     foreach ($a in $existing) {
         Invoke-RestMethod -Headers $Headers -Method Delete -Uri "$ApiBase/releases/assets/$($a.id)" | Out-Null
     }
